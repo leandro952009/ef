@@ -1,0 +1,761 @@
+import React, { useState, useEffect, createContext, useContext, useRef } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { Home, Info, BookOpen, MessageCircle, Mail, User, Search, CheckCircle, XCircle } from 'lucide-react'; // Icons for navigation and UI
+
+// --- Firebase Context ---
+// This context will provide Firebase instances (db, auth) and user info to all components.
+const FirebaseContext = createContext(null);
+
+const FirebaseProvider = ({ children }) => {
+    const [db, setDb] = useState(null);
+    const [auth, setAuth] = useState(null);
+    const [userId, setUserId] = useState(null);
+    const [isAuthReady, setIsAuthReady] = useState(false);
+    const [firebaseError, setFirebaseError] = useState(null);
+
+    useEffect(() => {
+        const initializeFirebase = async () => {
+            try {
+                // Global variables provided by the Canvas environment
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+                const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+                if (!firebaseConfig) {
+                    console.error("Firebase config is not defined.");
+                    setFirebaseError("Firebase configuration missing. Community features may not work.");
+                    setIsAuthReady(true); // Still set ready to render other parts
+                    return;
+                }
+
+                const app = initializeApp(firebaseConfig);
+                const firestoreDb = getFirestore(app);
+                const firebaseAuth = getAuth(app);
+
+                setDb(firestoreDb);
+                setAuth(firebaseAuth);
+
+                // Sign in with custom token if available, otherwise anonymously
+                if (initialAuthToken) {
+                    await signInWithCustomToken(firebaseAuth, initialAuthToken);
+                } else {
+                    await signInAnonymously(firebaseAuth);
+                }
+
+                // Listen for auth state changes
+                const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+                    if (user) {
+                        setUserId(user.uid);
+                    } else {
+                        // If no user, generate a random ID for unauthenticated access (for public data)
+                        setUserId(crypto.randomUUID());
+                    }
+                    setIsAuthReady(true);
+                });
+
+                return () => unsubscribe(); // Cleanup auth listener
+            } catch (error) {
+                console.error("Error initializing Firebase:", error);
+                setFirebaseError("Failed to initialize Firebase. Community features may not work.");
+                setIsAuthReady(true);
+            }
+        };
+
+        initializeFirebase();
+    }, []);
+
+    return (
+        <FirebaseContext.Provider value={{ db, auth, userId, isAuthReady, firebaseError }}>
+            {children}
+        </FirebaseContext.Provider>
+    );
+};
+
+// --- Components ---
+
+const Header = ({ currentPage, setCurrentPage }) => {
+    return (
+        <header className="bg-gradient-to-r from-emerald-700 to-green-800 text-white p-6 shadow-lg rounded-b-xl">
+            <div className="container mx-auto flex flex-col md:flex-row items-center justify-between">
+                <h1 className="text-4xl font-extrabold tracking-tight mb-4 md:mb-0">
+                    <span className="text-green-200">Harmony</span>Haven
+                </h1>
+                <p className="text-lg text-green-100 italic">Cultivating Well-being, Naturally.</p>
+            </div>
+            <nav className="mt-6">
+                <ul className="flex flex-wrap justify-center gap-4 text-lg font-medium">
+                    <li>
+                        <button onClick={() => setCurrentPage('home')} className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${currentPage === 'home' ? 'bg-green-600 text-white shadow-md' : 'hover:bg-green-700 hover:text-white'}`}>
+                            <Home size={20} /> <span>Home</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button onClick={() => setCurrentPage('about')} className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${currentPage === 'about' ? 'bg-green-600 text-white shadow-md' : 'hover:bg-green-700 hover:text-white'}`}>
+                            <Info size={20} /> <span>About</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button onClick={() => setCurrentPage('topics')} className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${currentPage === 'topics' ? 'bg-green-600 text-white shadow-md' : 'hover:bg-green-700 hover:text-white'}`}>
+                            <BookOpen size={20} /> <span>Topics</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button onClick={() => setCurrentPage('resources')} className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${currentPage === 'resources' ? 'bg-green-600 text-white shadow-md' : 'hover:bg-green-700 hover:text-white'}`}>
+                            <Search size={20} /> <span>Resources</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button onClick={() => setCurrentPage('community')} className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${currentPage === 'community' ? 'bg-green-600 text-white shadow-md' : 'hover:bg-green-700 hover:text-white'}`}>
+                            <MessageCircle size={20} /> <span>Community</span>
+                        </button>
+                    </li>
+                    <li>
+                        <button onClick={() => setCurrentPage('contact')} className={`flex items-center space-x-2 px-4 py-2 rounded-full transition-all duration-300 ${currentPage === 'contact' ? 'bg-green-600 text-white shadow-md' : 'hover:bg-green-700 hover:text-white'}`}>
+                            <Mail size={20} /> <span>Contact</span>
+                        </button>
+                    </li>
+                </ul>
+            </nav>
+        </header>
+    );
+};
+
+const Footer = () => {
+    return (
+        <footer className="bg-gradient-to-r from-emerald-700 to-green-800 text-white p-6 text-center mt-12 rounded-t-xl shadow-inner">
+            <div className="container mx-auto">
+                <p className="text-sm">&copy; {new Date().getFullYear()} HarmonyHaven. All rights reserved.</p>
+                <p className="text-xs mt-2 text-green-200">Disclaimer: This website provides general information and self-assessment tools for educational purposes only. It is not intended to be a substitute for professional medical or psychological advice, diagnosis, or treatment. Always seek the advice of a qualified health provider with any questions you may have regarding a medical or psychological condition.</p>
+                <p className="text-xs mt-1 text-green-200">Privacy Policy | Terms of Service</p>
+            </div>
+        </footer>
+    );
+};
+
+const HomePage = () => {
+    return (
+        <main className="container mx-auto p-6">
+            <section className="bg-white p-8 rounded-xl shadow-lg mb-8 text-center">
+                <h2 className="text-5xl font-bold text-emerald-800 mb-4">Welcome to HarmonyHaven</h2>
+                <p className="text-xl text-gray-700 leading-relaxed">
+                    Discover a holistic approach to well-being, inspired by the tranquility and resilience of nature. At HarmonyHaven, we believe in nurturing the mind, body, and spirit through evidence-based insights and practical guidance.
+                </p>
+                <div className="mt-8 flex justify-center">
+                    <img
+                        src="https://placehold.co/600x300/a5d6a7/2e7d32?text=Nature+Inspired+Wellness"
+                        alt="Nature Inspired Wellness"
+                        className="rounded-lg shadow-md max-w-full h-auto"
+                        onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/600x300/a5d6a7/2e7d32?text=Image+Not+Found'; }}
+                    />
+                </div>
+            </section>
+
+            <section className="bg-green-50 p-8 rounded-xl shadow-lg mb-8">
+                <h3 className="text-3xl font-semibold text-emerald-700 mb-6 text-center">Our Philosophy: Growing Towards Balance</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h4 className="text-xl font-bold text-green-800 mb-2">Mindful Living</h4>
+                        <p className="text-gray-600">Embrace presence and clarity. Learn techniques to calm your mind and reduce stress.</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h4 className="text-xl font-bold text-green-800 mb-2">Natural Connection</h4>
+                        <p className="text-gray-600">Reconnect with the healing power of nature. Discover how the environment impacts your well-being.</p>
+                    </div>
+                    <div className="bg-white p-6 rounded-lg shadow-md">
+                        <h4 className="text-xl font-bold text-green-800 mb-2">Holistic Growth</h4>
+                        <p className="text-gray-600">Foster growth across all dimensions of your life – mental, physical, emotional, and spiritual.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    );
+};
+
+const AboutPage = () => {
+    return (
+        <main className="container mx-auto p-6">
+            <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+                <h2 className="text-4xl font-bold text-emerald-800 mb-6 text-center">About HarmonyHaven & Psicóloga Deyse Resende</h2>
+                <div className="flex flex-col md:flex-row items-center md:space-x-8">
+                    <div className="md:w-1/3 mb-6 md:mb-0">
+                        <img
+                            src="https://placehold.co/300x300/c8e6c9/2e7d32?text=Psicóloga+Deyse+Resende+Photo"
+                            alt="Psicóloga Deyse Resende Photo"
+                            className="rounded-full shadow-md w-48 h-48 object-cover mx-auto"
+                            onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/300x300/c8e6c9/2e7d32?text=Image+Not+Found'; }}
+                        />
+                        <p className="text-center text-gray-600 mt-2 text-sm italic">Psicóloga Deyse Resende, Founder</p>
+                    </div>
+                    <div className="md:w-2/3 text-lg text-gray-700 leading-relaxed">
+                        <p className="mb-4">
+                            HarmonyHaven was founded by Psicóloga Deyse Resende, a passionate advocate for holistic well-being with [X years] of experience in [her field, e.g., psychology, wellness coaching, environmental science]. Her journey began with a deep appreciation for the interconnectedness of human health and the natural world.
+                        </p>
+                        <p className="mb-4">
+                            Psicóloga Deyse Resende holds a [Degree/Certification, e.g., Master's in Clinical Psychology, Certified Wellness Coach] from [University/Institution]. She believes in empowering individuals with evidence-based knowledge and practical tools to cultivate a life of balance, resilience, and joy.
+                        </p>
+                        <p>
+                            Through HarmonyHaven, she aims to create a supportive space where complex psychological and wellness concepts are made accessible and actionable for everyone, fostering a community dedicated to sustainable personal growth and environmental stewardship.
+                        </p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    );
+};
+
+const TopicsPage = () => {
+    const [searchTerm, setSearchTerm] = useState('');
+    const [activeCategory, setActiveCategory] = useState('All');
+
+    const categories = ['All', 'Clinical Psychology', 'Cognitive Psychology', 'Social Psychology', 'Developmental Psychology', 'Biological Psychology', 'Health & Environmental Psychology'];
+
+    const topics = [
+        {
+            category: 'Clinical Psychology',
+            title: 'Understanding Anxiety Disorders',
+            summary: 'Delve into Generalized Anxiety Disorder, Social Anxiety, Panic Disorder, and specific phobias. Learn about their symptoms, potential causes, and evidence-based therapeutic approaches like CBT and exposure therapy.',
+            content: 'Anxiety disorders are a group of mental health conditions characterized by significant feelings of anxiety and fear. Unlike normal anxiety, these disorders involve excessive, persistent, and often debilitating worry and fear that interfere with daily life. Common types include Generalized Anxiety Disorder (GAD), Social Anxiety Disorder, Panic Disorder, and specific phobias. While causes can be multifaceted (biological, psychological, environmental), effective treatments often involve Cognitive Behavioral Therapy (CBT), medication, and lifestyle adjustments. CBT helps individuals identify and change negative thought patterns and behaviors contributing to anxiety, while exposure therapy is particularly effective for phobias.',
+            keywords: ['anxiety', 'GAD', 'panic disorder', 'CBT', 'therapy']
+        },
+        {
+            category: 'Cognitive Psychology',
+            title: 'Memory: How We Remember and Forget',
+            summary: 'Explore the fascinating processes of memory formation, storage, and retrieval. Understand different types of memory (short-term, long-term, working) and common reasons for forgetting.',
+            content: 'Memory is the faculty of the brain by which data or information is encoded, stored, and retrieved when needed. It\'s a complex cognitive process involving three main stages: encoding (initial learning), storage (maintaining information over time), and retrieval (accessing stored information). Different types of memory include sensory memory (brief, initial recording), short-term memory (limited capacity, temporary), and long-term memory (vast capacity, durable). Long-term memory is further divided into explicit (conscious recall, like facts and events) and implicit (unconscious, like skills). Forgetting can occur due to decay, interference, retrieval failure, or motivated forgetting.',
+            keywords: ['memory', 'cognitive', 'encoding', 'retrieval', 'forgetting']
+        },
+        {
+            category: 'Social Psychology',
+            title: 'The Power of Social Influence',
+            summary: 'Examine how group dynamics, conformity, and obedience shape individual behavior and attitudes. Discuss classic experiments and real-world implications.',
+            content: 'Social influence refers to the ways in which individuals change their behavior to meet the demands of a social environment. Key concepts include conformity (adjusting one\'s behavior or thinking to coincide with a group standard), obedience (compliance with an order, request, or law or submission to another\'s authority), and group polarization (the tendency for a group to make decisions that are more extreme than the initial inclination of its members). Classic studies like Asch\'s conformity experiments and Milgram\'s obedience experiments highlight the profound impact of social pressures on individual actions. Understanding social influence is crucial for analyzing phenomena from fashion trends to political movements.',
+            keywords: ['social influence', 'conformity', 'obedience', 'group dynamics']
+        },
+        {
+            category: 'Developmental Psychology',
+            title: 'Child Development Milestones',
+            summary: 'A guide to key developmental stages in children from infancy through adolescence, covering cognitive, emotional, and social growth.',
+            content: 'Child development is a field that studies the processes through which children grow and mature. It encompasses physical, cognitive, social, and emotional growth. Key milestones serve as benchmarks for typical development, though individual variations are common. In infancy, motor skills and attachment are crucial. Early childhood sees rapid language acquisition and imaginative play. Middle childhood focuses on social skills and academic learning. Adolescence is marked by identity formation, abstract thinking, and increasing independence. Understanding these stages helps parents and educators provide appropriate support and interventions.',
+            keywords: ['child development', 'milestones', 'cognitive growth', 'social growth']
+        },
+        {
+            category: 'Biological Psychology',
+            title: 'The Brain and Behavior: An Introduction to Neuroscience',
+            summary: 'Explore the biological basis of psychological processes. Learn about brain structures, neurotransmitters, and their role in mood, thought, and action.',
+            content: 'Biological psychology, also known as behavioral neuroscience, investigates the biological basis of behavior and mental processes. It explores how the brain, nervous system, and other biological systems influence our thoughts, feelings, and actions. Key areas of study include brain anatomy (e.g., cortex, limbic system), the function of neurons and neurotransmitters (e.g., serotonin, dopamine, norepinephrine), and the impact of genetics on behavior. Understanding these biological underpinnings provides crucial insights into conditions like depression, addiction, and neurodevelopmental disorders, and informs pharmacological treatments.',
+            keywords: ['neuroscience', 'brain', 'neurotransmitters', 'behavioral psychology', 'genetics']
+        },
+        {
+            category: 'Health & Environmental Psychology',
+            title: 'Nature\'s Rx: The Benefits of Green Spaces',
+            summary: 'Discover the psychological and physical benefits of spending time in nature, and how environmental factors impact well-being.',
+            content: 'Health psychology examines the psychological and behavioral processes in health, illness, and healthcare. Environmental psychology focuses on the interaction between individuals and their surroundings. A significant intersection is the impact of green spaces on well-being. Research consistently shows that exposure to nature can reduce stress, improve mood, enhance cognitive function, and even boost physical health. Concepts like "forest bathing" (Shinrin-yoku) highlight the therapeutic benefits of immersing oneself in natural environments. Urban planning that incorporates accessible green spaces is increasingly recognized as vital for public health.',
+            keywords: ['health psychology', 'environmental psychology', 'nature', 'green spaces', 'stress reduction']
+        }
+    ];
+
+    const filteredTopics = topics.filter(topic => {
+        const matchesCategory = activeCategory === 'All' || topic.category === activeCategory;
+        const matchesSearch = topic.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              topic.summary.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              topic.content.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              topic.keywords.some(keyword => keyword.toLowerCase().includes(searchTerm.toLowerCase()));
+        return matchesCategory && matchesSearch;
+    });
+
+    return (
+        <main className="container mx-auto p-6">
+            <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+                <h2 className="text-4xl font-bold text-emerald-800 mb-6 text-center">Explore Our Topics</h2>
+
+                {/* Search and Category Filters */}
+                <div className="mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="relative w-full md:w-1/2">
+                        <input
+                            type="text"
+                            placeholder="Search topics..."
+                            className="w-full p-3 pl-10 rounded-full border-2 border-green-300 focus:border-green-600 focus:ring-green-600 outline-none transition-all duration-300"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                    </div>
+                    <div className="flex flex-wrap justify-center gap-2 md:gap-4 w-full md:w-1/2">
+                        {categories.map(category => (
+                            <button
+                                key={category}
+                                onClick={() => setActiveCategory(category)}
+                                className={`px-4 py-2 rounded-full text-sm font-medium transition-all duration-300
+                                    ${activeCategory === category
+                                        ? 'bg-green-700 text-white shadow-md'
+                                        : 'bg-green-100 text-green-800 hover:bg-green-200'
+                                    }`}
+                            >
+                                {category}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Topic Cards */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                    {filteredTopics.length > 0 ? (
+                        filteredTopics.map((topic, index) => (
+                            <div key={index} className="bg-green-50 p-6 rounded-lg shadow-md hover:shadow-xl transition-shadow duration-300 border border-green-200">
+                                <h3 className="text-2xl font-semibold text-green-800 mb-3">{topic.title}</h3>
+                                <p className="text-sm text-green-600 mb-2 italic">{topic.category}</p>
+                                <p className="text-gray-700 mb-4">{topic.summary}</p>
+                                <details className="text-gray-800">
+                                    <summary className="font-semibold text-green-700 cursor-pointer hover:text-green-900">Read More</summary>
+                                    <p className="mt-2 text-gray-600">{topic.content}</p>
+                                    <p className="mt-4 text-sm text-gray-500">Keywords: {topic.keywords.join(', ')}</p>
+                                </details>
+                            </div>
+                        ))
+                    ) : (
+                        <p className="col-span-full text-center text-gray-600 text-lg">No topics found matching your criteria.</p>
+                    )}
+                </div>
+            </section>
+        </main>
+    );
+};
+
+const ResourcesPage = () => {
+    const [quizResult, setQuizResult] = useState(null); // null, 'correct', 'incorrect'
+    const [selectedAnswer, setSelectedAnswer] = useState(null);
+
+    const quizQuestion = {
+        question: "Which type of psychology focuses on memory, perception, and language?",
+        options: [
+            { id: 'a', text: "Clinical Psychology" },
+            { id: 'b', text: "Cognitive Psychology" },
+            { id: 'c', text: "Social Psychology" },
+            { id: 'd', text: "Developmental Psychology" }
+        ],
+        correctAnswer: 'b'
+    };
+
+    const handleQuizSubmit = () => {
+        if (selectedAnswer === quizQuestion.correctAnswer) {
+            setQuizResult('correct');
+        } else {
+            setQuizResult('incorrect');
+        }
+    };
+
+    const resetQuiz = () => {
+        setQuizResult(null);
+        setSelectedAnswer(null);
+    };
+
+    return (
+        <main className="container mx-auto p-6">
+            <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+                <h2 className="text-4xl font-bold text-emerald-800 mb-6 text-center">Resources for Growth</h2>
+
+                {/* Interactive Quiz */}
+                <div className="bg-green-50 p-6 rounded-lg shadow-md mb-8 border border-green-200">
+                    <h3 className="text-2xl font-semibold text-green-800 mb-4">Quick Quiz: Test Your Knowledge!</h3>
+                    <p className="text-lg text-gray-700 mb-4">{quizQuestion.question}</p>
+                    <div className="space-y-3">
+                        {quizQuestion.options.map(option => (
+                            <label key={option.id} className="flex items-center space-x-3 cursor-pointer">
+                                <input
+                                    type="radio"
+                                    name="quiz"
+                                    value={option.id}
+                                    checked={selectedAnswer === option.id}
+                                    onChange={() => setSelectedAnswer(option.id)}
+                                    className="form-radio h-5 w-5 text-green-600 transition-colors duration-200"
+                                    disabled={quizResult !== null}
+                                />
+                                <span className="text-gray-800 text-base">{option.text}</span>
+                            </label>
+                        ))}
+                    </div>
+                    <div className="mt-6 flex items-center space-x-4">
+                        <button
+                            onClick={handleQuizSubmit}
+                            disabled={selectedAnswer === null || quizResult !== null}
+                            className="bg-green-700 text-white px-6 py-3 rounded-full shadow-md hover:bg-green-800 transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Submit Answer
+                        </button>
+                        {quizResult && (
+                            <button
+                                onClick={resetQuiz}
+                                className="bg-gray-300 text-gray-800 px-6 py-3 rounded-full shadow-md hover:bg-gray-400 transition-colors duration-300"
+                            >
+                                Try Again
+                            </button>
+                        )}
+                    </div>
+                    {quizResult === 'correct' && (
+                        <p className="mt-4 text-green-700 font-semibold flex items-center">
+                            <CheckCircle size={20} className="mr-2" /> Correct! Great job!
+                        </p>
+                    )}
+                    {quizResult === 'incorrect' && (
+                        <p className="mt-4 text-red-600 font-semibold flex items-center">
+                            <XCircle size={20} className="mr-2" /> Incorrect. The correct answer was "Cognitive Psychology".
+                        </p>
+                    )}
+                </div>
+
+                {/* Infographics & Visual Aids */}
+                <div className="bg-green-50 p-6 rounded-lg shadow-md mb-8 border border-green-200">
+                    <h3 className="text-2xl font-semibold text-green-800 mb-4">Visual Guides & Infographics</h3>
+                    <p className="text-gray-700 mb-4">Complex concepts made easy to understand with engaging visuals.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-white p-4 rounded-lg shadow-sm">
+                            <h4 className="font-semibold text-green-700 mb-2">The Stress Cycle Infographic</h4>
+                            <img
+                                src="https://placehold.co/400x250/dcedc8/33691e?text=Stress+Cycle+Infographic"
+                                alt="Stress Cycle Infographic"
+                                className="w-full h-auto rounded-md"
+                                onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/400x250/dcedc8/33691e?text=Image+Not+Found'; }}
+                            />
+                            <p className="text-sm text-gray-500 mt-2">A visual breakdown of how stress impacts your body and mind.</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow-sm">
+                            <h4 className="font-semibold text-green-700 mb-2">Benefits of Mindfulness Chart</h4>
+                            <img
+                                src="https://placehold.co/400x250/dcedc8/33691e?text=Mindfulness+Benefits+Chart"
+                                alt="Mindfulness Benefits Chart"
+                                className="w-full h-auto rounded-md"
+                                onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/400x250/dcedc8/33691e?text=Image+Not+Found'; }}
+                            />
+                            <p className="text-sm text-gray-500 mt-2">See the profound effects of a regular mindfulness practice.</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Videos & Guided Practices */}
+                <div className="bg-green-50 p-6 rounded-lg shadow-md border border-green-200">
+                    <h3 className="text-2xl font-semibold text-green-800 mb-4">Videos & Guided Practices</h3>
+                    <p className="text-gray-700 mb-4">Short, calming videos to guide you through practices or explain concepts.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-white p-4 rounded-lg shadow-sm">
+                            <h4 className="font-semibold text-green-700 mb-2">5-Minute Guided Meditation</h4>
+                            <div className="aspect-video w-full bg-gray-200 flex items-center justify-center rounded-md">
+                                <span className="text-gray-500">Video Placeholder</span>
+                                {/* In a real app, you'd embed a YouTube/Vimeo video here */}
+                            </div>
+                            <p className="text-sm text-gray-500 mt-2">A quick session to bring calm and focus to your day.</p>
+                        </div>
+                        <div className="bg-white p-4 rounded-lg shadow-sm">
+                            <h4 className="font-semibold text-green-700 mb-2">Introduction to Cognitive Behavioral Therapy</h4>
+                            <div className="aspect-video w-full bg-gray-200 flex items-center justify-center rounded-md">
+                                <span className="text-gray-500">Video Placeholder</span>
+                            </div>
+                            <p className="text-sm text-gray-500 mt-2">An accessible overview of a powerful therapeutic approach.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    );
+};
+
+const CommunityPage = () => {
+    const { db, userId, isAuthReady, firebaseError } = useContext(FirebaseContext);
+    const [messages, setMessages] = useState([]);
+    const [newMessage, setNewMessage] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [posting, setPosting] = useState(false);
+    const messagesEndRef = useRef(null); // Ref for scrolling to bottom
+
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'; // Get app ID for collection path
+
+    // Scroll to bottom when messages update
+    useEffect(() => {
+        if (messagesEndRef.current) {
+            messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+        }
+    }, [messages]);
+
+    useEffect(() => {
+        if (!isAuthReady || !db) {
+            console.log("Firebase not ready or db not available for community page.");
+            return;
+        }
+
+        setLoading(true);
+        const q = query(collection(db, `artifacts/${appId}/public/data/communityMessages`)); // No orderBy due to limitations
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const fetchedMessages = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            }));
+            // Sort messages by timestamp in client-side as orderBy is restricted
+            fetchedMessages.sort((a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0));
+            setMessages(fetchedMessages);
+            setLoading(false);
+        }, (error) => {
+            console.error("Error fetching messages:", error);
+            setFirebaseError("Failed to load community messages.");
+            setLoading(false);
+        });
+
+        return () => unsubscribe(); // Cleanup listener on component unmount
+    }, [db, isAuthReady, appId]); // Re-run if db or auth state changes
+
+    const handleSendMessage = async (e) => {
+        e.preventDefault();
+        if (!newMessage.trim() || !db || !userId) {
+            return;
+        }
+
+        setPosting(true);
+        try {
+            await addDoc(collection(db, `artifacts/${appId}/public/data/communityMessages`), {
+                text: newMessage,
+                userId: userId,
+                timestamp: serverTimestamp(),
+            });
+            setNewMessage('');
+        } catch (error) {
+            console.error("Error sending message:", error);
+            alert("Failed to send message. Please try again."); // Using alert for simple error feedback as per instructions
+        } finally {
+            setPosting(false);
+        }
+    };
+
+    return (
+        <main className="container mx-auto p-6">
+            <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+                <h2 className="text-4xl font-bold text-emerald-800 mb-6 text-center">Community Forum</h2>
+                <p className="text-gray-700 mb-4 text-center">
+                    Connect with others, share insights, and discuss topics related to well-being.
+                    <br/>
+                    <span className="text-sm text-gray-500">Your User ID: <span className="font-mono text-green-700 break-all">{userId || 'Loading...'}</span></span>
+                </p>
+
+                {firebaseError && (
+                    <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
+                        <strong className="font-bold">Error:</strong>
+                        <span className="block sm:inline"> {firebaseError}</span>
+                    </div>
+                )}
+
+                {!isAuthReady && (
+                    <div className="text-center py-8">
+                        <p className="text-green-700 text-lg">Initializing Firebase and authentication...</p>
+                        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mt-4"></div>
+                    </div>
+                )}
+
+                {isAuthReady && (
+                    <>
+                        <div className="bg-green-50 p-6 rounded-lg shadow-inner h-96 overflow-y-auto flex flex-col mb-6 border border-green-200">
+                            {loading ? (
+                                <p className="text-center text-green-700">Loading messages...</p>
+                            ) : messages.length === 0 ? (
+                                <p className="text-center text-gray-600">No messages yet. Be the first to post!</p>
+                            ) : (
+                                messages.map((msg) => (
+                                    <div key={msg.id} className={`p-3 rounded-lg mb-2 max-w-[80%] ${msg.userId === userId ? 'bg-green-200 self-end' : 'bg-gray-100 self-start'}`}>
+                                        <p className="font-semibold text-green-800 break-all">
+                                            {msg.userId === userId ? 'You' : `User: ${msg.userId}`}
+                                        </p>
+                                        <p className="text-gray-800">{msg.text}</p>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            {msg.timestamp ? new Date(msg.timestamp.toDate()).toLocaleString() : 'Sending...'}
+                                        </p>
+                                    </div>
+                                ))
+                            )}
+                            <div ref={messagesEndRef} /> {/* Scroll target */}
+                        </div>
+
+                        <form onSubmit={handleSendMessage} className="flex flex-col sm:flex-row gap-4">
+                            <textarea
+                                className="flex-grow p-3 rounded-lg border-2 border-green-300 focus:border-green-600 focus:ring-green-600 outline-none resize-none"
+                                rows="3"
+                                placeholder="Write your message..."
+                                value={newMessage}
+                                onChange={(e) => setNewMessage(e.target.value)}
+                                disabled={posting}
+                            ></textarea>
+                            <button
+                                type="submit"
+                                className="bg-green-700 text-white px-6 py-3 rounded-full shadow-md hover:bg-green-800 transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+                                disabled={posting || !newMessage.trim()}
+                            >
+                                {posting ? 'Sending...' : 'Send Message'}
+                            </button>
+                        </form>
+                    </>
+                )}
+            </section>
+        </main>
+    );
+};
+
+
+const ContactPage = () => {
+    const [formData, setFormData] = useState({ name: '', email: '', message: '' });
+    const [submitStatus, setSubmitStatus] = useState(null); // 'success', 'error', null
+
+    const handleChange = (e) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setSubmitStatus(null); // Reset status
+        // In a real application, this would send data to a backend service (e.g., Firebase Functions, email service)
+        // For this example, we'll simulate a submission.
+        console.log("Contact form submitted:", formData);
+
+        try {
+            // Simulate API call
+            await new Promise(resolve => setTimeout(resolve, 1500));
+            setSubmitStatus('success');
+            setFormData({ name: '', email: '', message: '' }); // Clear form
+        } catch (error) {
+            console.error("Error submitting contact form:", error);
+            setSubmitStatus('error');
+        }
+    };
+
+    return (
+        <main className="container mx-auto p-6">
+            <section className="bg-white p-8 rounded-xl shadow-lg mb-8">
+                <h2 className="text-4xl font-bold text-emerald-800 mb-6 text-center">Get In Touch</h2>
+                <p className="text-lg text-gray-700 mb-8 text-center">
+                    We'd love to hear from you! Please fill out the form below or reach out directly.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    {/* Contact Information */}
+                    <div className="bg-green-50 p-6 rounded-lg shadow-md border border-green-200">
+                        <h3 className="text-2xl font-semibold text-green-800 mb-4">Contact Information</h3>
+                        <p className="text-gray-700 mb-2"><strong>Email:</strong> psicologadeyseresende@gmail.com</p>
+                        <p className="text-gray-700 mb-2"><strong>Phone:</strong> +55 (61) 99928-9922</p>
+                        <p className="text-gray-700 mb-2"><strong>WhatsApp:</strong> <a href="https://wa.me/5561999289922" target="_blank" rel="noopener noreferrer" className="text-green-700 hover:underline">+55 (61) 99928-9922</a></p>
+                        <p className="text-gray-700 mb-2"><strong>Address:</strong> 123 Wellness Way, Green Valley, Earth</p>
+                        <div className="mt-4">
+                            <h4 className="font-semibold text-green-700 mb-2">Follow Us:</h4>
+                            <div className="flex space-x-4">
+                                {/* Placeholder for social media icons */}
+                                <a href="#" className="text-green-700 hover:text-green-900 transition-colors duration-200">
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.29 20.251c7.547 0 11.675-6.253 11.675-11.675 0-.178 0-.355-.012-.53A8.348 8.348 0 0022 5.92a8.19 8.19 0 01-2.357.646A4.11 4.11 0 0021.6 4c-.795.474-1.67.81-2.6.992A4.096 4.096 0 0016.9 2a4.102 4.102 0 00-4.1 4.1c0 .322.035.636.102.937A11.603 11.603 0 013 4.29a4.084 4.084 0 001.27 5.46A4.08 4.08 0 013 9.406v.05c0 4.47 3.18 8.19 7.404 9.043A4.09 4.09 0 0110 19.55c-.407 0-.806-.039-1.192-.116A4.11 4.11 0 008.29 20.25z"/></svg>
+                                </a>
+                                <a href="#" className="text-green-700 hover:text-green-900 transition-colors duration-200">
+                                    <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path fillRule="evenodd" d="M22 12c0-5.523-4.477-10-10-10S2 6.477 2 12c0 4.991 3.657 9.128 8.438 9.878v-6.987h-2.54V12h2.54V9.797c0-2.506 1.492-3.89 3.776-3.89 1.094 0 2.238.195 2.238.195v2.46h-1.26c-1.243 0-1.63.771-1.63 1.562V12h2.773l-.443 2.89h-2.33V22H12c5.523 0 10-4.477 10-10z" clipRule="evenodd"/></svg>
+                                </a>
+                                {/* Add more social icons as needed */}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Contact Form */}
+                    <div className="bg-green-50 p-6 rounded-lg shadow-md border border-green-200">
+                        <h3 className="text-2xl font-semibold text-green-800 mb-4">Send Us a Message</h3>
+                        <form onSubmit={handleSubmit} className="space-y-4">
+                            <div>
+                                <label htmlFor="name" className="block text-gray-700 font-medium mb-1">Name</label>
+                                <input
+                                    type="text"
+                                    id="name"
+                                    name="name"
+                                    value={formData.name}
+                                    onChange={handleChange}
+                                    className="w-full p-3 rounded-md border-2 border-green-300 focus:border-green-600 focus:ring-green-600 outline-none transition-colors duration-200"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="email" className="block text-gray-700 font-medium mb-1">Email</label>
+                                <input
+                                    type="email"
+                                    id="email"
+                                    name="email"
+                                    value={formData.email}
+                                    onChange={handleChange}
+                                    className="w-full p-3 rounded-md border-2 border-green-300 focus:border-green-600 focus:ring-green-600 outline-none transition-colors duration-200"
+                                    required
+                                />
+                            </div>
+                            <div>
+                                <label htmlFor="message" className="block text-gray-700 font-medium mb-1">Message</label>
+                                <textarea
+                                    id="message"
+                                    name="message"
+                                    value={formData.message}
+                                    onChange={handleChange}
+                                    rows="5"
+                                    className="w-full p-3 rounded-md border-2 border-green-300 focus:border-green-600 focus:ring-green-600 outline-none resize-y transition-colors duration-200"
+                                    required
+                                ></textarea>
+                            </div>
+                            <button
+                                type="submit"
+                                className="w-full bg-green-700 text-white px-6 py-3 rounded-full shadow-md hover:bg-green-800 transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={submitStatus === 'success'} // Disable after success
+                            >
+                                Send Message
+                            </button>
+                            {submitStatus === 'success' && (
+                                <p className="text-green-700 font-semibold text-center mt-4 flex items-center justify-center">
+                                    <CheckCircle size={20} className="mr-2" /> Message sent successfully! We'll get back to you soon.
+                                </p>
+                            )}
+                            {submitStatus === 'error' && (
+                                <p className="text-red-600 font-semibold text-center mt-4 flex items-center justify-center">
+                                    <XCircle size={20} className="mr-2" /> Failed to send message. Please try again later.
+                                </p>
+                            )}
+                        </form>
+                    </div>
+                </div>
+            </section>
+        </main>
+    );
+};
+
+
+// --- Main App Component ---
+const App = () => {
+    const [currentPage, setCurrentPage] = useState('home'); // State to manage current page
+
+    // Simple page routing based on currentPage state
+    const renderPage = () => {
+        switch (currentPage) {
+            case 'home':
+                return <HomePage />;
+            case 'about':
+                return <AboutPage />;
+            case 'topics':
+                return <TopicsPage />;
+            case 'resources':
+                return <ResourcesPage />;
+            case 'community':
+                return <CommunityPage />;
+            case 'contact':
+                return <ContactPage />;
+            default:
+                return <HomePage />;
+        }
+    };
+
+    return (
+        <FirebaseProvider>
+            <div className="min-h-screen flex flex-col bg-green-50">
+                <Header currentPage={currentPage} setCurrentPage={setCurrentPage} />
+                <div className="flex-grow">
+                    {renderPage()}
+                </div>
+                <Footer />
+            </div>
+        </FirebaseProvider>
+    );
+};
+
+export default App;
